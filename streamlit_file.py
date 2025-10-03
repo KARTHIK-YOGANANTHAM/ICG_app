@@ -96,8 +96,8 @@ if uploaded_file is not None:
             for col in processed_df.columns[0:-1]:
                 processed_df[col] = processed_df[col].apply(lambda x: int(str(x), 16) if isinstance(x, str) else x)
             
-            processed_df["AB"] = (processed_df.iloc[:, 1] * 256) + processed_df.iloc[:, 2]
-            processed_df["CD"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
+            processed_df["PLOT2"] = (processed_df.iloc[:, 1] * 256) + processed_df.iloc[:, 2]
+            processed_df["PLOT"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
             
             # Formula 2
             processed_df["VW"] = (processed_df.iloc[:, 5] * 65535) + (processed_df.iloc[:, 6] * 256) + processed_df.iloc[:, 7]
