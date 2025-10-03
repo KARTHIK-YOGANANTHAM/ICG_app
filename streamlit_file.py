@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt, find_peaks, savgol_filter
 import io
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import io
 
 # Set page configuration
 st.set_page_config(page_title="ICG Signal Processor", layout="wide")
@@ -19,13 +22,13 @@ Upload your CSV file and adjust the parameters to analyze the ICG waveform.
 st.sidebar.header("Upload and Parameters")
 
 # File upload
-uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="txt")
 
 # Parameters section
 st.sidebar.subheader("Processing Parameters")
 
 # Sampling frequency
-fs = st.sidebar.number_input("Sampling Frequency (Hz)", min_value=1, value=64, step=1)
+fs = st.sidebar.number_input("Sampling Frequency (Hz)", min_value=1, value=62, step=1)
 
 # Filter parameters
 lowcut = st.sidebar.number_input("Low Cutoff Frequency (Hz)", min_value=0.1, value=0.8, step=0.1)
@@ -36,11 +39,48 @@ st.sidebar.subheader("Patient Parameters")
 weight = st.sidebar.number_input("Weight (kg)", min_value=1.0, value=90.0, step=1.0)
 height_cm = st.sidebar.number_input("Height (cm)", min_value=1.0, value=183.0, step=1.0)
 
+
+def txt_to_dataframe(txt_content):
+    """
+    Convert TXT file content to pandas DataFrame
+    Supports space-separated, tab-separated, or comma-separated values
+    """
+    try:
+        # Try different separators
+        for separator in [',', '\t', ' ', ';']:
+            try:
+                df = pd.read_csv(io.StringIO(txt_content), sep=separator, header=None, engine='python')
+                if df.shape[1] > 1:  # If we have multiple columns
+                    st.success(f"Successfully read TXT file with '{separator}' separator")
+                    return df
+            except:
+                continue
+        
+        # If no separator works, try reading as fixed width
+        try:
+            df = pd.read_fwf(io.StringIO(txt_content), header=None)
+            if df.shape[1] > 1:
+                st.success("Successfully read TXT file as fixed width")
+                return df
+        except:
+            pass
+            
+        # If all else fails, return None
+        st.error("Could not parse TXT file. Please check the format.")
+        return None
+        
+    except Exception as e:
+        st.error(f"Error reading TXT file: {str(e)}")
+        return None
+
 # Main content area
 if uploaded_file is not None:
     try:
         # Read the uploaded file
-        df = pd.read_csv(uploaded_file, header=0)
+        txt_content = uploaded_file.getvalue().decode("utf-8")
+        
+        # Convert TXT to DataFrame
+        df = txt_to_dataframe(txt_content)
         
         # Display original data info
         st.subheader("Original Data")
@@ -90,7 +130,7 @@ if uploaded_file is not None:
         with col1:
             start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=50.0, step=1.0)
         with col2:
-            end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=55.0, step=1.0)
+            end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=70.0, step=1.0)
         
         # Extract Z_ohm data
         z_ohm = processed_df[icg_column]
@@ -150,47 +190,79 @@ if uploaded_file is not None:
         t_zoom = t[mask]
         z_zoom = icg_filtered[mask]
         raw_zoom = z_ohm[mask]
+        dz_dt = np.gradient(z_ohm, 1/fs)
         dz_dt_zoom = np.gradient(raw_zoom, 1/fs)
         
         # Plotting
         st.subheader("Signal Visualization")
         
         # Create tabs for different plots
-        tab1, tab2, tab3 = st.tabs(["Raw ICG Signal", "Filtered ICG Signal", "Comparison"])
+        tab1, tab2, tab3 = st.tabs(["Raw ICG Signal", "Filtered ICG Signal", "First Derivative signal"])
         
         with tab1:
-            st.write(f"Raw ICG Signal (Zoom: {start_time}s - {end_time}s)")
-            fig1, ax1 = plt.subplots(figsize=(20, 6))
-            ax1.plot(t_zoom, raw_zoom, color="steelblue", linewidth=1)
-            ax1.set_xlabel("Time (s)")
-            ax1.set_ylabel("Impedance (Ohms)")
-            ax1.set_title(f"Raw ICG Waveform ({start_time}s - {end_time}s)")
-            ax1.grid(True, alpha=0.3)
-            st.pyplot(fig1)
+            st.write(f"Raw ICG Signal (Interactive Zoom)")
+            fig1 = go.Figure()
+            fig1.add_trace(go.Scatter(x=t, y=z_ohm, mode='lines', name='Full Raw Signal', 
+                                        line=dict(color='lightgray', width=1), opacity=0.7))
+            fig1.add_trace(go.Scatter(x=t_zoom, y=raw_zoom, mode='lines', name='Zoomed Raw Signal', 
+                                        line=dict(color='steelblue', width=3)))
+            fig1.add_vrect(x0=start_time, x1=end_time, 
+                              fillcolor="lightyellow", opacity=0.3, line_width=0,
+                              annotation_text="Zoom Area", annotation_position="top left")
+            fig1.update_layout(
+                    title="Raw ICG Waveform - Click and drag to zoom, double-click to reset",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Impedance (Ohms)",
+                    template="plotly_white",
+                    height=600,
+                    showlegend=True
+                )
+            fig1.update_xaxes(rangeslider=dict(visible=True))
+            st.plotly_chart(fig1, use_container_width=True)
         
         with tab2:
-            st.write(f"Filtered ICG Signal (Zoom: {start_time}s - {end_time}s)")
-            fig2, ax2 = plt.subplots(figsize=(20, 6))
-            ax2.plot(t_zoom, dz_dt_zoom, color="crimson", linewidth=1)
-            ax2.set_xlabel("Time (s)")
-            ax2.set_ylabel("Impedance (Ohms)")
-            ax2.set_title(f"Filtered ICG Waveform ({start_time}s - {end_time}s)")
-            ax2.grid(True, alpha=0.3)
-            st.pyplot(fig2)
+            st.write(f"Filtered ICG Signal (Interactive Zoom)")
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(x=t, y=z_zoom, mode='lines', name='Full Filtered Signal', 
+                                        line=dict(color='lightgray', width=1), opacity=0.7))
+            fig2.add_trace(go.Scatter(x=t_zoom, y=z_ohm, mode='lines', name='Zoomed Filtered Signal', 
+                                        line=dict(color='crimson', width=3)))
+            fig2.add_vrect(x0=start_time, x1=end_time, 
+                              fillcolor="lightyellow", opacity=0.3, line_width=0,
+                              annotation_text="Zoom Area", annotation_position="top left")
+            fig2.update_layout(
+                    title="Filtered ICG Waveform - Click and drag to zoom, double-click to reset",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Impedance (Ohms)",
+                    template="plotly_white",
+                    height=600,
+                    showlegend=True
+                )
+            fig2.update_xaxes(rangeslider=dict(visible=True))
+            st.plotly_chart(fig2, use_container_width=True)
         
         with tab3:
-            st.write(f"Comparison: Raw vs Filtered ICG Signal (Zoom: {start_time}s - {end_time}s)")
-            fig3, ax3 = plt.subplots(figsize=(20, 6))
-            ax3.plot(t_zoom, z_zoom, color="steelblue", linewidth=1, label="Raw Signal", alpha=0.7)
-            ax3.plot(t_zoom, dz_dt_zoom, color="crimson", linewidth=1, label="Filtered Signal")
-            ax3.set_xlabel("Time (s)")
-            ax3.set_ylabel("Impedance (Ohms)")
-            ax3.set_title(f"Raw vs Filtered ICG Waveform ({start_time}s - {end_time}s)")
-            ax3.legend()
-            ax3.grid(True, alpha=0.3)
-            st.pyplot(fig3)
-        
+            st.write(f"First Derivative ICG Signal (Interactive Zoom)")
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(x=t, y=dz_dt, mode='lines', name='Full First derivative Signal', 
+                                        line=dict(color='lightgray', width=1), opacity=0.7))
+            fig3.add_trace(go.Scatter(x=t_zoom, y=dz_dt_zoom, mode='lines', name='Zoomed First derivative Signal', 
+                                        line=dict(color='crimson', width=3)))
+            fig3.add_vrect(x0=start_time, x1=end_time, 
+                              fillcolor="lightyellow", opacity=0.3, line_width=0,
+                              annotation_text="Zoom Area", annotation_position="top left")
+            fig3.update_layout(
+                    title="First Derivative Waveform - Click and drag to zoom, double-click to reset",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Impedance (Ohms)",
+                    template="plotly_white",
+                    height=600,
+                    showlegend=True
+                )
+            fig3.update_xaxes(rangeslider=dict(visible=True))
+            st.plotly_chart(fig3, use_container_width=True)
         # Additional information
+
         st.subheader("Processing Information")
         st.write(f"""
         - **Sampling Frequency**: {fs} Hz
