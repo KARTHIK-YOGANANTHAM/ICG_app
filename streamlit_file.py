@@ -1,3 +1,5 @@
+#------------------------------Importing Libraries----------------------------------------------------------------------------#
+#-----------------------------------------------------------------------------------------------------------------------------#
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,7 +10,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import io
 
-# Set page configuration
+
+
+###-----set page title----------------------------------------------------------------------------##
 st.set_page_config(page_title="ICG Signal Processor", layout="wide")
 
 # Title and description
@@ -18,7 +22,7 @@ This app processes Impedance Cardiography (ICG) data and visualizes the filtered
 Upload your CSV file and adjust the parameters to analyze the ICG waveform.
 """)
 
-# Sidebar for file upload and parameters
+##-----set sidebar parameters---------------------------------------------------------------------##
 st.sidebar.header("Upload and Parameters")
 
 # File upload
@@ -40,11 +44,10 @@ weight = st.sidebar.number_input("Weight (kg)", min_value=1.0, value=90.0, step=
 height_cm = st.sidebar.number_input("Height (cm)", min_value=1.0, value=183.0, step=1.0)
 
 
+
+
+##----------------Function to read txt-------------------------------------------------------------##
 def txt_to_dataframe(txt_content):
-    """
-    Convert TXT file content to pandas DataFrame
-    Supports space-separated, tab-separated, or comma-separated values
-    """
     try:
         # Try different separators
         for separator in [',', '\t', ' ', ';']:
@@ -56,7 +59,6 @@ def txt_to_dataframe(txt_content):
             except:
                 continue
         
-        # If no separator works, try reading as fixed width
         try:
             df = pd.read_fwf(io.StringIO(txt_content), header=None)
             if df.shape[1] > 1:
@@ -73,12 +75,13 @@ def txt_to_dataframe(txt_content):
         st.error(f"Error reading TXT file: {str(e)}")
         return None
 
-# Main content area
+
+##--------------------MAIN CONTENT AREA------------------------------------------------------------------------------------###
 if uploaded_file is not None:
     try:
         file_extension = uploaded_file.name.split('.')[-1].lower()
         
-        # Read the uploaded file based on type
+ ##########----------for csv file----------------------------------------------------###########       
         if file_extension == 'csv':
             df = pd.read_csv(uploaded_file, header=0)
         
@@ -92,9 +95,11 @@ if uploaded_file is not None:
         # Display processed data
             st.subheader("Processed Data")
             st.write(f"Processed data shape: {processed_df.shape}")
-            st.dataframe(processed_df.head())
+            st.dataframe(processed_df.tail())
         
         # Column selection
+            st.divider()
+            st.divider()
             st.subheader("Column Selection")
         
         # Get all column names for selection
@@ -117,20 +122,6 @@ if uploaded_file is not None:
         # Extract Z_ohm data
             z_ohm = processed_df[icg_column]
 
-        
-        # Calculate BMI and BSA
-            height_m = height_cm / 100
-            bmi = weight / height_m**2
-            bsa = np.sqrt((height_cm * weight) / 3600)
-        
-        # Display calculated parameters
-            st.subheader("Calculated Parameters")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("BMI", f"{bmi:.2f}")
-            with col2:
-                st.metric("BSA", f"{bsa:.2f} m²")
-        
         # Signal processing functions
             def butter_bandpass(lowcut, highcut, fs, order=4):
                 nyq = 0.5 * fs
@@ -148,19 +139,7 @@ if uploaded_file is not None:
                 nyq = 0.5 * fs
                 b, a = butter(order, cutoff_hz/nyq, btype='low')
                 return filtfilt(b, a, sig)
-        
-        # Process signals
-            st.subheader("Signal Processing")
-        
-        # Apply filters
-            baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
-            z0 = np.mean(baseline)
-            pulsatile = z_ohm - baseline
-        
-            
-        # Display basal impedance
-            st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
-        
+          
         # Create time array
             t = np.arange(len(z_ohm)) / fs
             z_ohm = -1 * z_ohm
@@ -176,6 +155,7 @@ if uploaded_file is not None:
             dz_dt_smooth = bandpass_filter(dz_dt_zoom, lowcut, highcut, fs)
         
         # Plotting
+            st.divider()
             st.subheader("Signal Visualization")
         
         # Create tabs for different plots
@@ -214,6 +194,7 @@ if uploaded_file is not None:
                 st.pyplot(fig3)
         
             # Additional information
+            st.divider()
             st.subheader("Processing Information")
             st.write(f"""
             - **Sampling Frequency**: {fs} Hz
@@ -223,9 +204,8 @@ if uploaded_file is not None:
             - **Total Samples**: {len(z_ohm)}
             - **Zoom Samples**: {len(t_zoom)}
             """)
-
-        else: # if txt file
-
+ ###########-------------------for txt file----------------------------------------------##########
+        else:
         # Read the uploaded file
             txt_content = uploaded_file.getvalue().decode("utf-8")
         
@@ -245,13 +225,9 @@ if uploaded_file is not None:
             # 2. Convert HEX → DEC for columns B–M (now index 0–11 after dropping)
                 for col in processed_df.columns[0:-1]:
                     processed_df[col] = processed_df[col].apply(lambda x: int(str(x), 16) if isinstance(x, str) else x)
-            
-                processed_df["AB"] = (processed_df.iloc[:, 1] * 256) + processed_df.iloc[:, 2]
-                processed_df["PLOT"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
-            
-            # Formula 2
-                processed_df["VW"] = (processed_df.iloc[:, 5] * 65535) + (processed_df.iloc[:, 6] * 256) + processed_df.iloc[:, 7]
-                processed_df["XY"] = (processed_df.iloc[:, 8] * 65535) + (processed_df.iloc[:, 9] * 256) + processed_df.iloc[:, 10]
+
+                processed_df["PLOT-1"] = (processed_df.iloc[:, 5] * 65535) + (processed_df.iloc[:, 6] * 256) + processed_df.iloc[:, 7]
+                processed_df["PLOT-2"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
             
                 return processed_df
         
@@ -263,6 +239,8 @@ if uploaded_file is not None:
             st.dataframe(processed_df.head())
             
             # Column selection
+            st.divider()
+            st.divider()
             st.subheader("Column Selection")
             
             # Get all column names for selection
@@ -280,25 +258,11 @@ if uploaded_file is not None:
             with col1:
                 start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=10.0, step=1.0)
             with col2:
-                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=total_time, step=1.0)
+                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value= total_time, step=1.0)
             
             # Extract Z_ohm data
             z_ohm = processed_df[icg_column]
             
-            # Calculate BMI and BSA
-            height_m = height_cm / 100
-            bmi = weight / height_m**2
-            bsa = np.sqrt((height_cm * weight) / 3600)
-            
-            # Display calculated parameters
-            st.subheader("Calculated Parameters")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("BMI", f"{bmi:.2f}")
-            with col2:
-                st.metric("BSA", f"{bsa:.2f} m²")
-            with col3:
-                st.metric("BMI/fs", f"{(bmi)/fs:.4f}")
             
             # Signal processing functions
             def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -317,18 +281,7 @@ if uploaded_file is not None:
                 nyq = 0.5 * fs
                 b, a = butter(order, cutoff_hz/nyq, btype='low')
                 return filtfilt(b, a, sig)
-            
-            # Process signals
-            st.subheader("Signal Processing")
-            
-            # Apply filters
-            baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
-            z0 = np.mean(baseline)
-            pulsatile = z_ohm - baseline
-            
-            
-            # Display basal impedance
-            st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
+                      
             
             # Create time array
             t = np.arange(len(z_ohm)) / fs
@@ -346,6 +299,7 @@ if uploaded_file is not None:
             dz_dt_smooth = bandpass_filter(dz_dt_zoom, lowcut, highcut, fs)
             
             # Plotting
+            st.divider()
             st.subheader("Signal Visualization")
             
             # Create tabs for different plots
@@ -355,11 +309,11 @@ if uploaded_file is not None:
                 st.write(f"Raw ICG Signal (Interactive Zoom)")
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(x=t, y=z_ohm, mode='lines', name='Full Raw Signal', 
-                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                                            line=dict(color='lightgreen', width=1), opacity=0.7))
                 fig1.add_trace(go.Scatter(x=t_zoom, y=raw_zoom, mode='lines', name='Zoomed Raw Signal', 
                                             line=dict(color='steelblue', width=3)))
                 fig1.add_vrect(x0=start_time, x1=end_time, 
-                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  fillcolor="lightgray", opacity=0.3, line_width=0,
                                   annotation_text="Zoom Area", annotation_position="top left")
                 fig1.update_layout(
                         title="Raw ICG Waveform - Click and drag to zoom, double-click to reset",
@@ -376,11 +330,11 @@ if uploaded_file is not None:
                 st.write(f"Filtered ICG Signal (Interactive Zoom)")
                 fig2 = go.Figure()
                 fig2.add_trace(go.Scatter(x=t, y=z_zoom, mode='lines', name='Full Filtered Signal', 
-                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                                            line=dict(color='lightgreen', width=1), opacity=0.7))
                 fig2.add_trace(go.Scatter(x=t_zoom, y=z_ohm, mode='lines', name='Zoomed Filtered Signal', 
-                                            line=dict(color='crimson', width=3)))
+                                            line=dict(color='violet', width=3)))
                 fig2.add_vrect(x0=start_time, x1=end_time, 
-                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  fillcolor="lightgray", opacity=0.3, line_width=0,
                                   annotation_text="Zoom Area", annotation_position="top left")
                 fig2.update_layout(
                         title="Filtered ICG Waveform - Click and drag to zoom, double-click to reset",
@@ -397,11 +351,11 @@ if uploaded_file is not None:
                 st.write(f"First Derivative ICG Signal (Interactive Zoom)")
                 fig3 = go.Figure()
                 fig3.add_trace(go.Scatter(x=t, y=dz_dt, mode='lines', name='Full First derivative Signal', 
-                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                                            line=dict(color='steelblue', width=1), opacity=0.7))
                 fig3.add_trace(go.Scatter(x=t_zoom, y=dz_dt_zoom, mode='lines', name='Zoomed First derivative Signal', 
-                                            line=dict(color='crimson', width=3)))
+                                            line=dict(color='lightgreen', width=3)))
                 fig3.add_vrect(x0=start_time, x1=end_time, 
-                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  fillcolor="lightgray", opacity=0.3, line_width=0,
                                   annotation_text="Zoom Area", annotation_position="top left")
                 fig3.update_layout(
                         title="First Derivative Waveform - Click and drag to zoom, double-click to reset",
@@ -413,8 +367,9 @@ if uploaded_file is not None:
                     )
                 fig3.update_xaxes(rangeslider=dict(visible=True))
                 st.plotly_chart(fig3, use_container_width=True)
-            # Additional information
 
+
+            st.divider()    
             st.subheader("Processing Information")
             st.write(f"""
             - **Sampling Frequency**: {fs} Hz
@@ -424,6 +379,36 @@ if uploaded_file is not None:
             - **Total Samples**: {len(z_ohm)}
             - **Zoom Samples**: {len(t_zoom)}
             """)
+
+###---------------------------------------------------------------CALCULATIONS REGIONS---------------------------------------------------------####
+        # Calculate BMI and BSA
+        height_m = height_cm / 100
+        bmi = weight / height_m**2
+        bsa = np.sqrt((height_cm * weight) / 3600)
+
+        
+        # Display calculated parameters
+        st.divider()
+        st.subheader("Calculated Parameters")
+        col1, col2= st.columns(2)
+        with col1:
+            st.metric("BMI", f"{bmi:.2f}")
+        with col2:
+            st.metric("BSA", f"{bsa:.2f} m²")
+
+
+        # Process signals
+        st.divider()
+        st.subheader("Signal Processing")
+        
+        # Apply filters
+        baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
+        z0 = np.mean(baseline)
+        pulsatile = z_ohm - baseline
+        
+            
+        # Display basal impedance
+        st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
         
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
@@ -458,4 +443,5 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 
