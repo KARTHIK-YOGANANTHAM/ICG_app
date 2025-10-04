@@ -22,7 +22,7 @@ Upload your CSV file and adjust the parameters to analyze the ICG waveform.
 st.sidebar.header("Upload and Parameters")
 
 # File upload
-uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="txt")
+uploaded_file = st.sidebar.file_uploader("Choose a TXT or CSV file", type=["txt", "csv"])
 
 # Parameters section
 st.sidebar.subheader("Processing Parameters")
@@ -76,202 +76,354 @@ def txt_to_dataframe(txt_content):
 # Main content area
 if uploaded_file is not None:
     try:
-        # Read the uploaded file
-        txt_content = uploaded_file.getvalue().decode("utf-8")
+        file_extension = uploaded_file.name.split('.')[-1].lower()
         
-        # Convert TXT to DataFrame
-        df = txt_to_dataframe(txt_content)
+        # Read the uploaded file based on type
+        if file_extension == 'csv':
+            df = pd.read_csv(uploaded_file, header=0)
         
-        # Display original data info
-        st.subheader("Original Data")
-        st.write(f"Data shape: {df.shape}")
-        st.dataframe(df.head())
+            # Display original data info
+            st.subheader("Original Data")
+            st.write(f"Data shape: {df.shape}")
+            st.dataframe(df.head())
         
-        # Process ICG data
-        def process_icg_file(input_df):
-            # 1. Drop columns A (FA) and O (last col)
-            processed_df = input_df.drop(input_df.columns[[0, -1]], axis=1)
-            
-            # 2. Convert HEX → DEC for columns B–M (now index 0–11 after dropping)
-            for col in processed_df.columns[0:-1]:
-                processed_df[col] = processed_df[col].apply(lambda x: int(str(x), 16) if isinstance(x, str) else x)
-            
-            processed_df["PLOT2"] = (processed_df.iloc[:, 1] * 256) + processed_df.iloc[:, 2]
-            processed_df["PLOT"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
-            
-            # Formula 2
-            processed_df["VW"] = (processed_df.iloc[:, 5] * 65535) + (processed_df.iloc[:, 6] * 256) + processed_df.iloc[:, 7]
-            processed_df["XY"] = (processed_df.iloc[:, 8] * 65535) + (processed_df.iloc[:, 9] * 256) + processed_df.iloc[:, 10]
-            
-            return processed_df
-        
-        processed_df = process_icg_file(df)
+            processed_df = df.copy()
         
         # Display processed data
-        st.subheader("Processed Data")
-        st.write(f"Processed data shape: {processed_df.shape}")
-        st.dataframe(processed_df.head())
+            st.subheader("Processed Data")
+            st.write(f"Processed data shape: {processed_df.shape}")
+            st.dataframe(processed_df.head())
         
         # Column selection
-        st.subheader("Column Selection")
+            st.subheader("Column Selection")
         
         # Get all column names for selection
-        all_columns = processed_df.columns.tolist()
+            all_columns = processed_df.columns.tolist()
         
         # ICG column selection (Z_ohm)
-        st.write("Select the ICG column (Z_ohm):")
-        icg_column = st.selectbox("ICG Column", options=all_columns, index=13 if len(all_columns) > 13 else 0)
+            st.write("Select the ICG column (Z_ohm):")
+            icg_column = st.selectbox("ICG Column", options=all_columns, index=13 if len(all_columns) > 13 else 0)
         
         # Time range selection
-        total_time = len(processed_df) / fs
-        st.write(f"Total recording time: {total_time:.2f} seconds")
+            total_time = len(processed_df) / fs
+            st.write(f"Total recording time: {total_time:.2f} seconds")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=10.0, step=1.0)
-        with col2:
-            end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=total_time, step=1.0)
+            col1, col2 = st.columns(2)
+            with col1:
+                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=50.0, step=1.0)
+            with col2:
+                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=70.0, step=1.0)
         
         # Extract Z_ohm data
-        z_ohm = processed_df[icg_column]
+            z_ohm = processed_df[icg_column]
+
         
         # Calculate BMI and BSA
-        height_m = height_cm / 100
-        bmi = weight / height_m**2
-        bsa = np.sqrt((height_cm * weight) / 3600)
+            height_m = height_cm / 100
+            bmi = weight / height_m**2
+            bsa = np.sqrt((height_cm * weight) / 3600)
         
         # Display calculated parameters
-        st.subheader("Calculated Parameters")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("BMI", f"{bmi:.2f}")
-        with col2:
-            st.metric("BSA", f"{bsa:.2f} m²")
-        with col3:
-            st.metric("BMI/fs", f"{(bmi)/fs:.4f}")
+            st.subheader("Calculated Parameters")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("BMI", f"{bmi:.2f}")
+            with col2:
+                st.metric("BSA", f"{bsa:.2f} m²")
         
         # Signal processing functions
-        def butter_bandpass(lowcut, highcut, fs, order=4):
-            nyq = 0.5 * fs
-            low = lowcut / nyq
-            high = highcut / nyq
-            b, a = butter(order, [low, high], btype='band')
-            return b, a
+            def butter_bandpass(lowcut, highcut, fs, order=4):
+                nyq = 0.5 * fs
+                low = lowcut / nyq
+                high = highcut / nyq
+                b, a = butter(order, [low, high], btype='band')
+                return b, a
         
-        def bandpass_filter(data, lowcut, highcut, fs, order=4):
-            b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-            y = filtfilt(b, a, data)
-            return y
+            def bandpass_filter(data, lowcut, highcut, fs, order=4):
+                b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+                y = filtfilt(b, a, data)
+                return y
         
-        def lowpass_baseline(sig, fs, cutoff_hz=0.5, order=4):
-            nyq = 0.5 * fs
-            b, a = butter(order, cutoff_hz/nyq, btype='low')
-            return filtfilt(b, a, sig)
+            def lowpass_baseline(sig, fs, cutoff_hz=0.5, order=4):
+                nyq = 0.5 * fs
+                b, a = butter(order, cutoff_hz/nyq, btype='low')
+                return filtfilt(b, a, sig)
         
         # Process signals
-        st.subheader("Signal Processing")
+            st.subheader("Signal Processing")
         
         # Apply filters
-        baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
-        z0 = np.mean(baseline)
-        pulsatile = z_ohm - baseline
+            baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
+            z0 = np.mean(baseline)
+            pulsatile = z_ohm - baseline
         
-        # Bandpass filter
-        icg_filtered = bandpass_filter(z_ohm, lowcut, highcut, fs)
-        
+            
         # Display basal impedance
-        st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
+            st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
         
         # Create time array
-        t = np.arange(len(z_ohm)) / fs
+            t = np.arange(len(z_ohm)) / fs
+            z_ohm = -1 * z_ohm
+            icg_filtered = bandpass_filter(z_ohm, lowcut, highcut, fs)
+        
         
         # Zoom in on selected time range
-        mask = (t >= start_time) & (t <= end_time)
-        t_zoom = t[mask]
-        z_zoom = icg_filtered[mask]
-        raw_zoom = z_ohm[mask]
-        dz_dt = np.gradient(z_ohm, 1/fs)
-        dz_dt_zoom = np.gradient(raw_zoom, 1/fs)
+            mask = (t >= start_time) & (t <= end_time)
+            t_zoom = t[mask]
+            z_zoom = icg_filtered[mask]
+            raw_zoom = z_ohm[mask]
+            dz_dt_zoom = np.gradient(z_zoom, 1/fs)
+            dz_dt_smooth = bandpass_filter(dz_dt_zoom, lowcut, highcut, fs)
         
         # Plotting
-        st.subheader("Signal Visualization")
+            st.subheader("Signal Visualization")
         
         # Create tabs for different plots
-        tab1, tab2, tab3 = st.tabs(["Raw ICG Signal", "Filtered ICG Signal", "First Derivative signal"])
+            tab1, tab2, tab3 = st.tabs(["Raw ICG Signal", "Filtered ICG Signal", "First Derivative Signal"])
         
-        with tab1:
-            st.write(f"Raw ICG Signal (Interactive Zoom)")
-            fig1 = go.Figure()
-            fig1.add_trace(go.Scatter(x=t, y=z_ohm, mode='lines', name='Full Raw Signal', 
-                                        line=dict(color='lightgray', width=1), opacity=0.7))
-            fig1.add_trace(go.Scatter(x=t_zoom, y=raw_zoom, mode='lines', name='Zoomed Raw Signal', 
-                                        line=dict(color='steelblue', width=3)))
-            fig1.add_vrect(x0=start_time, x1=end_time, 
-                              fillcolor="lightyellow", opacity=0.3, line_width=0,
-                              annotation_text="Zoom Area", annotation_position="top left")
-            fig1.update_layout(
-                    title="Raw ICG Waveform - Click and drag to zoom, double-click to reset",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Impedance (Ohms)",
-                    template="plotly_white",
-                    height=600,
-                    showlegend=True
-                )
-            fig1.update_xaxes(rangeslider=dict(visible=True))
-            st.plotly_chart(fig1, use_container_width=True)
+            with tab1:
+                st.write(f"Raw ICG Signal (Zoom: {start_time}s - {end_time}s)")
+                fig1, ax1 = plt.subplots(figsize=(24, 6))
+                ax1.plot(t_zoom, raw_zoom, color="steelblue", linewidth=1)
+                ax1.set_xlabel("Time (s)")
+                ax1.set_ylabel("Impedance (Ohms)")
+                ax1.set_title(f"Raw ICG Waveform ({start_time}s - {end_time}s)")
+                ax1.grid(True, alpha=0.3)
+                st.pyplot(fig1)
         
-        with tab2:
-            st.write(f"Filtered ICG Signal (Interactive Zoom)")
-            fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(x=t, y=z_zoom, mode='lines', name='Full Filtered Signal', 
-                                        line=dict(color='lightgray', width=1), opacity=0.7))
-            fig2.add_trace(go.Scatter(x=t_zoom, y=z_ohm, mode='lines', name='Zoomed Filtered Signal', 
-                                        line=dict(color='crimson', width=3)))
-            fig2.add_vrect(x0=start_time, x1=end_time, 
-                              fillcolor="lightyellow", opacity=0.3, line_width=0,
-                              annotation_text="Zoom Area", annotation_position="top left")
-            fig2.update_layout(
-                    title="Filtered ICG Waveform - Click and drag to zoom, double-click to reset",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Impedance (Ohms)",
-                    template="plotly_white",
-                    height=600,
-                    showlegend=True
-                )
-            fig2.update_xaxes(rangeslider=dict(visible=True))
-            st.plotly_chart(fig2, use_container_width=True)
+            with tab2:
+                st.write(f"Filtered ICG Signal (Zoom: {start_time}s - {end_time}s)")
+                fig2, ax2 = plt.subplots(figsize=(24, 6))
+                ax2.plot(t_zoom, z_zoom, color="crimson", linewidth=1)
+                ax2.set_xlabel("Time (s)")
+                ax2.set_ylabel("Impedance (Ohms)")
+                ax2.set_title(f"Filtered ICG Waveform ({start_time}s - {end_time}s)")
+                ax2.grid(True, alpha=0.3)
+                st.pyplot(fig2)
+            
+            with tab3:
+                st.write(f"Comparison: Raw vs Filtered ICG Signal (Zoom: {start_time}s - {end_time}s)")
+                fig3, ax3 = plt.subplots(figsize=(24, 6))
+                ax3.plot(t_zoom, dz_dt_zoom, color="steelblue", linewidth=1, label="Raw Signal", alpha=0.7)
+                ax3.plot(t_zoom, dz_dt_zoom, color="crimson", linewidth=1, label="Filtered Signal")
+                ax3.set_xlabel("Time (s)")
+                ax3.set_ylabel("Impedance (Ohms)")
+                ax3.set_title(f"First Derivative ICG Waveform ({start_time}s - {end_time}s)")
+                ax3.legend()
+                ax3.grid(True, alpha=0.3)
+                st.pyplot(fig3)
         
-        with tab3:
-            st.write(f"First Derivative ICG Signal (Interactive Zoom)")
-            fig3 = go.Figure()
-            fig3.add_trace(go.Scatter(x=t, y=dz_dt, mode='lines', name='Full First derivative Signal', 
-                                        line=dict(color='lightgray', width=1), opacity=0.7))
-            fig3.add_trace(go.Scatter(x=t_zoom, y=dz_dt_zoom, mode='lines', name='Zoomed First derivative Signal', 
-                                        line=dict(color='crimson', width=3)))
-            fig3.add_vrect(x0=start_time, x1=end_time, 
-                              fillcolor="lightyellow", opacity=0.3, line_width=0,
-                              annotation_text="Zoom Area", annotation_position="top left")
-            fig3.update_layout(
-                    title="First Derivative Waveform - Click and drag to zoom, double-click to reset",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Impedance (Ohms)",
-                    template="plotly_white",
-                    height=600,
-                    showlegend=True
-                )
-            fig3.update_xaxes(rangeslider=dict(visible=True))
-            st.plotly_chart(fig3, use_container_width=True)
-        # Additional information
+            # Additional information
+            st.subheader("Processing Information")
+            st.write(f"""
+            - **Sampling Frequency**: {fs} Hz
+            - **Bandpass Filter**: {lowcut} - {highcut} Hz
+            - **Selected ICG Column**: {icg_column}
+            - **Time Range**: {start_time} - {end_time} seconds
+            - **Total Samples**: {len(z_ohm)}
+            - **Zoom Samples**: {len(t_zoom)}
+            """)
 
-        st.subheader("Processing Information")
-        st.write(f"""
-        - **Sampling Frequency**: {fs} Hz
-        - **Bandpass Filter**: {lowcut} - {highcut} Hz
-        - **Selected ICG Column**: {icg_column}
-        - **Time Range**: {start_time} - {end_time} seconds
-        - **Total Samples**: {len(z_ohm)}
-        - **Zoom Samples**: {len(t_zoom)}
-        """)
+        else: # if txt file
+
+        # Read the uploaded file
+            txt_content = uploaded_file.getvalue().decode("utf-8")
+        
+        # Convert TXT to DataFrame
+            df = txt_to_dataframe(txt_content)
+        
+        # Display original data info
+            st.subheader("Original Data")
+            st.write(f"Data shape: {df.shape}")
+            st.dataframe(df.head())
+        
+        # Process ICG data
+            def process_icg_file(input_df):
+                # 1. Drop columns A (FA) and O (last col)
+                processed_df = input_df.drop(input_df.columns[[0, -1]], axis=1)
+            
+            # 2. Convert HEX → DEC for columns B–M (now index 0–11 after dropping)
+                for col in processed_df.columns[0:-1]:
+                    processed_df[col] = processed_df[col].apply(lambda x: int(str(x), 16) if isinstance(x, str) else x)
+            
+                processed_df["AB"] = (processed_df.iloc[:, 1] * 256) + processed_df.iloc[:, 2]
+                processed_df["PLOT"] = (processed_df.iloc[:, 3] * 256) + processed_df.iloc[:, 4]
+            
+            # Formula 2
+                processed_df["VW"] = (processed_df.iloc[:, 5] * 65535) + (processed_df.iloc[:, 6] * 256) + processed_df.iloc[:, 7]
+                processed_df["XY"] = (processed_df.iloc[:, 8] * 65535) + (processed_df.iloc[:, 9] * 256) + processed_df.iloc[:, 10]
+            
+                return processed_df
+        
+            processed_df = process_icg_file(df)
+        
+            # Display processed data
+            st.subheader("Processed Data")
+            st.write(f"Processed data shape: {processed_df.shape}")
+            st.dataframe(processed_df.head())
+            
+            # Column selection
+            st.subheader("Column Selection")
+            
+            # Get all column names for selection
+            all_columns = processed_df.columns.tolist()
+            
+            # ICG column selection (Z_ohm)
+            st.write("Select the ICG column (Z_ohm):")
+            icg_column = st.selectbox("ICG Column", options=all_columns, index=13 if len(all_columns) > 13 else 0)
+            
+            # Time range selection
+            total_time = len(processed_df) / fs
+            st.write(f"Total recording time: {total_time:.2f} seconds")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=50.0, step=1.0)
+            with col2:
+                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=70.0, step=1.0)
+            
+            # Extract Z_ohm data
+            z_ohm = processed_df[icg_column]
+            
+            # Calculate BMI and BSA
+            height_m = height_cm / 100
+            bmi = weight / height_m**2
+            bsa = np.sqrt((height_cm * weight) / 3600)
+            
+            # Display calculated parameters
+            st.subheader("Calculated Parameters")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("BMI", f"{bmi:.2f}")
+            with col2:
+                st.metric("BSA", f"{bsa:.2f} m²")
+            with col3:
+                st.metric("BMI/fs", f"{(bmi)/fs:.4f}")
+            
+            # Signal processing functions
+            def butter_bandpass(lowcut, highcut, fs, order=4):
+                nyq = 0.5 * fs
+                low = lowcut / nyq
+                high = highcut / nyq
+                b, a = butter(order, [low, high], btype='band')
+                return b, a
+            
+            def bandpass_filter(data, lowcut, highcut, fs, order=4):
+                b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+                y = filtfilt(b, a, data)
+                return y
+            
+            def lowpass_baseline(sig, fs, cutoff_hz=0.5, order=4):
+                nyq = 0.5 * fs
+                b, a = butter(order, cutoff_hz/nyq, btype='low')
+                return filtfilt(b, a, sig)
+            
+            # Process signals
+            st.subheader("Signal Processing")
+            
+            # Apply filters
+            baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
+            z0 = np.mean(baseline)
+            pulsatile = z_ohm - baseline
+            
+            
+            # Display basal impedance
+            st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
+            
+            # Create time array
+            t = np.arange(len(z_ohm)) / fs
+            z_ohm = -1 * z_ohm
+            # Bandpass filter
+            icg_filtered = bandpass_filter(z_ohm, lowcut, highcut, fs)
+            
+            # Zoom in on selected time range
+            mask = (t >= start_time) & (t <= end_time)
+            t_zoom = t[mask]
+            z_zoom = icg_filtered[mask]
+            raw_zoom = z_ohm[mask]
+            dz_dt = np.gradient(z_ohm, 1/fs)
+            dz_dt_zoom = np.gradient(z_zoom, 1/fs)
+            dz_dt_smooth = bandpass_filter(dz_dt_zoom, lowcut, highcut, fs)
+            
+            # Plotting
+            st.subheader("Signal Visualization")
+            
+            # Create tabs for different plots
+            tab1, tab2, tab3 = st.tabs(["Raw ICG Signal", "Filtered ICG Signal", "First Derivative signal"])
+            
+            with tab1:
+                st.write(f"Raw ICG Signal (Interactive Zoom)")
+                fig1 = go.Figure()
+                fig1.add_trace(go.Scatter(x=t, y=z_ohm, mode='lines', name='Full Raw Signal', 
+                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                fig1.add_trace(go.Scatter(x=t_zoom, y=raw_zoom, mode='lines', name='Zoomed Raw Signal', 
+                                            line=dict(color='steelblue', width=3)))
+                fig1.add_vrect(x0=start_time, x1=end_time, 
+                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  annotation_text="Zoom Area", annotation_position="top left")
+                fig1.update_layout(
+                        title="Raw ICG Waveform - Click and drag to zoom, double-click to reset",
+                        xaxis_title="Time (s)",
+                        yaxis_title="Impedance (Ohms)",
+                        template="plotly_white",
+                        height=600,
+                        showlegend=True
+                    )
+                fig1.update_xaxes(rangeslider=dict(visible=True))
+                st.plotly_chart(fig1, use_container_width=True)
+            
+            with tab2:
+                st.write(f"Filtered ICG Signal (Interactive Zoom)")
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(x=t, y=z_zoom, mode='lines', name='Full Filtered Signal', 
+                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                fig2.add_trace(go.Scatter(x=t_zoom, y=z_ohm, mode='lines', name='Zoomed Filtered Signal', 
+                                            line=dict(color='crimson', width=3)))
+                fig2.add_vrect(x0=start_time, x1=end_time, 
+                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  annotation_text="Zoom Area", annotation_position="top left")
+                fig2.update_layout(
+                        title="Filtered ICG Waveform - Click and drag to zoom, double-click to reset",
+                        xaxis_title="Time (s)",
+                        yaxis_title="Impedance (Ohms)",
+                        template="plotly_white",
+                        height=600,
+                        showlegend=True
+                    )
+                fig2.update_xaxes(rangeslider=dict(visible=True))
+                st.plotly_chart(fig2, use_container_width=True)
+            
+            with tab3:
+                st.write(f"First Derivative ICG Signal (Interactive Zoom)")
+                fig3 = go.Figure()
+                fig3.add_trace(go.Scatter(x=t, y=dz_dt, mode='lines', name='Full First derivative Signal', 
+                                            line=dict(color='lightgray', width=1), opacity=0.7))
+                fig3.add_trace(go.Scatter(x=t_zoom, y=dz_dt_zoom, mode='lines', name='Zoomed First derivative Signal', 
+                                            line=dict(color='crimson', width=3)))
+                fig3.add_vrect(x0=start_time, x1=end_time, 
+                                  fillcolor="lightyellow", opacity=0.3, line_width=0,
+                                  annotation_text="Zoom Area", annotation_position="top left")
+                fig3.update_layout(
+                        title="First Derivative Waveform - Click and drag to zoom, double-click to reset",
+                        xaxis_title="Time (s)",
+                        yaxis_title="Impedance (Ohms)",
+                        template="plotly_white",
+                        height=600,
+                        showlegend=True
+                    )
+                fig3.update_xaxes(rangeslider=dict(visible=True))
+                st.plotly_chart(fig3, use_container_width=True)
+            # Additional information
+
+            st.subheader("Processing Information")
+            st.write(f"""
+            - **Sampling Frequency**: {fs} Hz
+            - **Bandpass Filter**: {lowcut} - {highcut} Hz
+            - **Selected ICG Column**: {icg_column}
+            - **Time Range**: {start_time} - {end_time} seconds
+            - **Total Samples**: {len(z_ohm)}
+            - **Zoom Samples**: {len(t_zoom)}
+            """)
         
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
@@ -306,3 +458,4 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
