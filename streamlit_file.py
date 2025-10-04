@@ -110,9 +110,9 @@ if uploaded_file is not None:
         
             col1, col2 = st.columns(2)
             with col1:
-                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=50.0, step=1.0)
+                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=10.0, step=1.0)
             with col2:
-                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=70.0, step=1.0)
+                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=total_time, step=1.0)
         
         # Extract Z_ohm data
             z_ohm = processed_df[icg_column]
@@ -278,9 +278,9 @@ if uploaded_file is not None:
             
             col1, col2 = st.columns(2)
             with col1:
-                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=50.0, step=1.0)
+                start_time = st.number_input("Start Time (s)", min_value=0.0, max_value=total_time, value=10.0, step=1.0)
             with col2:
-                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=70.0, step=1.0)
+                end_time = st.number_input("End Time (s)", min_value=start_time, max_value=total_time, value=total_time, step=1.0)
             
             # Extract Z_ohm data
             z_ohm = processed_df[icg_column]
