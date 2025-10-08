@@ -9,6 +9,7 @@ import io
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import io
+import math
 
 
 
@@ -23,7 +24,9 @@ Upload your CSV file and adjust the parameters to analyze the ICG waveform.
 """)
 
 ##-----set sidebar parameters---------------------------------------------------------------------##
-st.sidebar.header("Upload and Parameters")
+st.sidebar.image("logo.png", width = 120)
+st.sidebar.header("Upload and Parameters setting")
+
 
 # File upload
 uploaded_file = st.sidebar.file_uploader("Choose a TXT or CSV file", type=["txt", "csv"])
@@ -44,7 +47,14 @@ weight = st.sidebar.number_input("Weight (kg)", min_value=1.0, value=90.0, step=
 height_cm = st.sidebar.number_input("Height (cm)", min_value=1.0, value=183.0, step=1.0)
 
 
+#### ------------------------- convert counts into ohms ------------------------------------------- ###
+adc_bits = 20             # ADC resolution
+vref = 1.0                # ADC reference voltage in Volts
+gain = 10.0               # receive channel gain
+i_exc = 0.0012            # # excitation current in Amps RMS (1.2 mA = 0.0012 A)
 
+adc_full = (2**adc_bits - 1)
+ohms_per_count = vref / (adc_full * gain * i_exc)
 
 ##----------------Function to read txt-------------------------------------------------------------##
 def txt_to_dataframe(txt_content):
@@ -121,6 +131,7 @@ if uploaded_file is not None:
         
         # Extract Z_ohm data
             z_ohm = processed_df[icg_column]
+            z_ohm = z_ohm * ohms_per_count
 
         # Signal processing functions
             def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -153,7 +164,13 @@ if uploaded_file is not None:
             raw_zoom = z_ohm[mask]
             dz_dt_zoom = np.gradient(z_zoom, 1/fs)
             dz_dt_smooth = bandpass_filter(dz_dt_zoom, lowcut, highcut, fs)
-        
+
+            start_idx = int(start_time * fs)
+            end_idx = int(end_time * fs)
+            t_seg = t[start_idx:end_idx]
+            dz_seg = dz_dt_smooth[start_idx:end_idx]
+
+            
         # Plotting
             st.divider()
             st.subheader("Signal Visualization")
@@ -332,7 +349,7 @@ if uploaded_file is not None:
                 fig2.add_trace(go.Scatter(x=t, y=z_zoom, mode='lines', name='Full Filtered Signal', 
                                             line=dict(color='lightgreen', width=1), opacity=0.7))
                 fig2.add_trace(go.Scatter(x=t_zoom, y=z_ohm, mode='lines', name='Zoomed Filtered Signal', 
-                                            line=dict(color='violet', width=3)))
+                                            line=dict(color='cyan', width=3)))
                 fig2.add_vrect(x0=start_time, x1=end_time, 
                                   fillcolor="lightgray", opacity=0.3, line_width=0,
                                   annotation_text="Zoom Area", annotation_position="top left")
@@ -351,7 +368,7 @@ if uploaded_file is not None:
                 st.write(f"First Derivative ICG Signal (Interactive Zoom)")
                 fig3 = go.Figure()
                 fig3.add_trace(go.Scatter(x=t, y=dz_dt, mode='lines', name='Full First derivative Signal', 
-                                            line=dict(color='steelblue', width=1), opacity=0.7))
+                                            line=dict(color='red',width=1), opacity=0.7))
                 fig3.add_trace(go.Scatter(x=t_zoom, y=dz_dt_zoom, mode='lines', name='Zoomed First derivative Signal', 
                                             line=dict(color='lightgreen', width=3)))
                 fig3.add_vrect(x0=start_time, x1=end_time, 
@@ -380,35 +397,198 @@ if uploaded_file is not None:
             - **Zoom Samples**: {len(t_zoom)}
             """)
 
-###---------------------------------------------------------------CALCULATIONS REGIONS---------------------------------------------------------####
-        # Calculate BMI and BSA
+###-----------------------------------------------------SIGNAL PROCESSING CALCULATIONS---------------------------------------------------------####
+        start_idx = int(start_time * fs)
+        end_idx = int(end_time * fs)
+        t_seg = t[start_idx:end_idx]
+        dz_seg = dz_dt_smooth[start_idx:end_idx]
+
+                    # ------------------------
+        # Detect C points (main peaks)
+        # ------------------------
+        c_peaks, _ = find_peaks(
+            dz_seg,
+            distance=fs*0.60,
+            prominence=np.std(dz_seg)*0.1
+        )
+
+        # ------------------------ 
+        # Detect B points (start of rise before C)
+        # ------------------------
+        b_points = []
+        for c in c_peaks:
+            search_region = dz_seg[max(0, c - int(1*fs)):c]
+            b_rel = np.where(np.diff(np.sign(search_region)) > 0)[0]
+            if len(b_rel) > 0:
+                b_points.append(c - len(search_region) + b_rel[-1])
+            else:
+                b_points.append(c - 5)
+
+        # ------------------------
+        # Detect X points (true end of ejection, skip notches)
+        # ------------------------
+        x_points = []
+        for c in c_peaks:
+            search_region = dz_seg[c:c + int(0.255*fs)]
+            if len(search_region) > 0:
+                c_amp = dz_seg[c]
+                valid_indices = [i for i, val in enumerate(search_region) if val < 0.8 * c_amp]
+                if valid_indices:
+                    min_idx = valid_indices[np.argmin([search_region[i] for i in valid_indices])]
+                    x_points.append(c + min_idx)
+                else:
+                    x_points.append(c + np.argmin(search_region))
+            else:
+                x_points.append(c + 5)
+
+        d2z_d2t = np.gradient(dz_dt_zoom, 1/fs)
+        d2z_d2t_smooth = bandpass_filter(d2z_d2t, lowcut, highcut, fs)
+        d2z_seg = d2z_d2t_smooth[start_idx:end_idx]
+
+        c_peaks1, _ = find_peaks(
+            d2z_seg,
+            distance=fs*0.60,
+            prominence=np.std(dz_seg)*0.1
+        )
+
+        d2z_d2t_max_values_new = d2z_seg[c_peaks1]
+        d2z_d2t_values = np.abs(d2z_d2t_max_values_new)
+
+        baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
+        z0 = np.mean(baseline)
+        pulsatile = z_ohm - baseline
+
+
+#----------------------------------------CALCULATING PARAMETERS------------------------------------------------################
+
+        # calculate VET ------------------------------------------------- 1
+        VET_values = (np.array(x_points) - np.array(b_points)) / fs
+        vet_values = VET_values * 1000
+
+        # Calculate BMI---------------------------------------------------------- 12
         height_m = height_cm / 100
         bmi = weight / height_m**2
+
+        # calculate BSA ---------------------------------------------------------- 13
         bsa = np.sqrt((height_cm * weight) / 3600)
 
+        # calculate RR interval ------------------------------------------ 2
+        c_times = t_seg[c_peaks]
+        rr_intervals = np.diff(c_times)
+
+        # calculate Heart rate -------------------------------------------- 3
+        heart_rates = 60 / rr_intervals
+        avg_heart_rate = heart_rates.mean()
+        RR = 60/avg_heart_rate
+
+        # calculate dzdt --------------------------------------------------- 4
+        dz_dt_max_values_new = dz_seg[c_peaks]
+        dz_dt_values = np.abs(dz_dt_max_values_new) 
+        dz_dt_values = dz_dt_values* 3
+        cb_values = (np.array(c_peaks) - np.array(b_points))
+        cb_values_new = (np.array(c_peaks) - np.array(b_points)) / fs
+
+        # Calculate Flow corrected Time (FTc)-------------------------------- 5
+        FTc = vet_values/np.sqrt(RR)
+
+        # Calculate Thoracic Fluid content ---------------------------------- 6
+        tfc = 1000 / baseline
+        value = bmi/fs
+
+        # Calculate Ejection Time Ratio ------------------------------------- 7
+        ETR = vet_values / (RR * 10 )
+
+        # Calculate Index of Contractility ----------------------------------- 8
+        IC = dz_dt_values * fs  / z0 * 15
+
+        # Calculate Acceleration Index ---------------------------------------- 9
+        ACI = 100 * d2z_d2t_values / cb_values.mean()
+
+        # Calculate Heather index --------------------------------------------- 10
+        HI = 2 * dz_dt_values / cb_values_new.mean()
+
+        # Calculate Velocity Index --------------------------------------------- 11
+        VI = 1000 * dz_dt_values / z0
+
+        # Calculate Stroke Volume ------------------------------------------------- 14
+        k = (baseline * bmi * value)  / (fs * bsa * tfc)
+        sv =  ( np.mean(k) * vet_values )/ z0**2 * np.mean(tfc) * bmi + avg_heart_rate
+
+        # Calculate Cardiac Output ------------------------------------------------- 15
+        co = sv * avg_heart_rate
+
+        # Calculate Cardiac Index -------------------------------------------------- 16
+        ci = co / bsa 
+
+        # calculate Stroke Volume Index --------------------------------------------- 17
+        si = sv / bsa
+
+ 
+
+####------------------------------------- SHOWING CALCULATED PARAMETERS ----------------------------------------- ######
         
         # Display calculated parameters
         st.divider()
         st.subheader("Calculated Parameters")
-        col1, col2= st.columns(2)
+
+        col1, col2, col3  = st.columns(3)
+        with col1:
+            st.metric("SV [ml/beat]",f"{sv.mean():.2f} ")
+        with col2:
+            st.metric("CO [L/min]", f"{co.mean()/1000:.2f} ")
+        with col3:
+            st.metric("HR [bpm]", f"{avg_heart_rate:.0f}")
+
+
+        col1, col2, col3= st.columns(3)
         with col1:
             st.metric("BMI", f"{bmi:.2f}")
         with col2:
-            st.metric("BSA", f"{bsa:.2f} m²")
+            st.metric("BSA m²", f"{bsa:.2f} ")
+        with col3:
+            st.metric("z0", f"{z0:.2f}")
+            col1, col2, col3= st.columns(3)
+
+
+        col1, col2, col3= st.columns(3)
+        with col1:
+            st.metric("VET [m/s]", f"{vet_values.mean():.2f}")
+        with col2:
+            st.metric("dZ/dt", f"{dz_dt_values.mean():.2f} ")
+        with col3:
+            st.metric("RR-int [s]", f"{RR:.2f}")
+
+
+        col1, col2, col3= st.columns(3)
+        with col1:
+            st.metric("ETR (%)", f"{ETR.mean():.2f}")
+        with col2:
+            st.metric("FTc [ms]", f"{FTc.mean():.2f} ")
+        with col3:
+            st.metric("TFC [ohm⁻¹]", f"{RR:.2f}")
+
+
+        col1, col2, col3= st.columns(3)
+        with col1:
+            st.metric("IC [s⁻¹]", f"{IC.mean():.2f}")
+        with col2:
+            st.metric("SI [mL/beat/m²]", f"{si.mean():.2f} ")
+        with col3:
+            st.metric("CI [mL/min/m²]", f"{ci.mean():.2f}")
+
+
+        col1, col2, col3= st.columns(3)
+        with col1:
+            st.metric("HI [s³]", f"{ETR.mean():.2f}")
+        with col2:
+            st.metric("VI [s⁻¹]", f"{FTc.mean():.2f} ")
+        with col3:
+            st.metric("ACI [s⁻²]", f"{RR:.2f}")
 
 
         # Process signals
         st.divider()
-        st.subheader("Signal Processing")
-        
-        # Apply filters
-        baseline = lowpass_baseline(z_ohm, fs, cutoff_hz=0.5, order=4)
-        z0 = np.mean(baseline)
-        pulsatile = z_ohm - baseline
-        
-            
-        # Display basal impedance
-        st.metric("Basal Impedance (Z0)", f"{z0:.2f} Ω")
+    
         
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
@@ -428,7 +608,7 @@ else:
     4. Process the ICG signal for analysis
     """)
 
-# Add some styling
+# styling
 st.markdown("""
 <style>
     .main-header {
@@ -443,5 +623,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 
 
